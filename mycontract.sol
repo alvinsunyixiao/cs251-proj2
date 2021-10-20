@@ -16,15 +16,27 @@ contract BlockchainSplitwise {
         uint last_activity;
     }
 
-    address[] public users;
+    address[] private _users;
     mapping (address => UserInfo) private _ledger;
+
+    function get_last_activity(address user_addr) public view returns (uint) {
+        return _ledger[user_addr].last_activity;
+    }
+
+    function get_all_users() public view returns (address[] memory) {
+        return _users;
+    }
+
+    function get_owing_users(address user_addr) public view returns (address[] memory) {
+        return _ledger[user_addr].owing_users;
+    }
 
     function touch_user(address user_addr) private {
         UserInfo storage user = _ledger[user_addr];
 
         // insert if non existing before
         if (user.last_activity == 0) {
-            users.push(user_addr);
+            _users.push(user_addr);
         }
 
         // put latest timestamp
@@ -43,15 +55,13 @@ contract BlockchainSplitwise {
         require(amount > 0, "IOU amount must be strictly positive");
         require(msg.sender != creditor, "cannot self owe");
 
-        address tmp_addr = creditor;
         uint32 new_amount = _ledger[msg.sender].owes[creditor].amount + amount;
         uint32 min_debt = new_amount;
         uint32 tmp_debt;
 
         // validate the found cycle given by the client
-        for (uint32 i = 0; i < address_chain.length; i++) {
-            tmp_debt = _ledger[tmp_addr].owes[address_chain[i]].amount;
-            tmp_addr = address_chain[i];
+        for (uint32 i = 1; i < address_chain.length; i++) {
+            tmp_debt = _ledger[address_chain[i-1]].owes[address_chain[i]].amount;
 
             if (tmp_debt < min_debt) {
                 min_debt = tmp_debt;
@@ -62,7 +72,10 @@ contract BlockchainSplitwise {
 
         // there exists a cycle
         if (address_chain.length > 0) {
-            require(tmp_addr == msg.sender, "last element of address_chain must be the sender address");
+            require(address_chain[0] == creditor, "first element of address_chain must be the creditor");
+            require(address_chain[address_chain.length - 1] == msg.sender,
+                "last element of address_chain must be the sender address");
+            new_amount -= min_debt;
         }
 
         // update sender's ledger
@@ -72,15 +85,13 @@ contract BlockchainSplitwise {
             owe_stat.exists = true;
             sender.owing_users.push(creditor);
         }
-        owe_stat.amount = new_amount - min_debt;
+        owe_stat.amount = new_amount;
         touch_user(msg.sender);
         touch_user(creditor);
 
         // update cycle ledger
-        tmp_addr = creditor;
-        for (uint32 i = 0; i < address_chain.length; i++) {
-            _ledger[tmp_addr].owes[address_chain[i]].amount -= min_debt;
-            tmp_addr = address_chain[i];
+        for (uint32 i = 1; i < address_chain.length; i++) {
+            _ledger[address_chain[i-1]].owes[address_chain[i]].amount -= min_debt;
         }
     }
 }
