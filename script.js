@@ -114,7 +114,7 @@ var abi = [
 abiDecoder.addABI(abi);
 // call abiDecoder.decodeMethod to use this - see 'getAllFunctionCalls' for more
 
-var contractAddress = '0xAf0f04A5E26BcE3Bbb42d92C1312C124B96bF7BF'; // FIXME: fill this in with your contract's address/hash
+var contractAddress = '0x8e6Fdc886Ce905280cF35230B338d95d7AA75A5c'; // FIXME: fill this in with your contract's address/hash
 var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 
 // =============================================================================
@@ -167,9 +167,15 @@ async function getLastActive(user) {
 async function add_IOU(creditor, amount) {
   const owing_users = await getOwingUsers(web3.eth.defaultAccount);
   const address_chain = await doBFS(creditor, web3.eth.defaultAccount, getOwingUsers);
+
+  const gas = await BlockchainSplitwise.methods.add_IOU(creditor, amount, address_chain)
+    .estimateGas({from: web3.eth.defaultAccount});
+
+  console.log("Gas consumption: ", gas);
+
   await BlockchainSplitwise.methods.add_IOU(creditor, amount, address_chain).send({
     from: web3.eth.defaultAccount,
-    gas: 300000,
+    gas: gas,
     value: 0,
   });
 }
