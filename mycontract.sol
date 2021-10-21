@@ -5,63 +5,61 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 contract BlockchainSplitwise {
-    struct OweStats {
-        uint32 amount;
-        bool exists;
-    }
-
     struct UserInfo {
-        mapping (address => OweStats) owes;
-        address[] owing_users;
+        address addr;
         uint last_activity;
+        uint[] creditor_indics;
     }
 
-    address[] private _users;
-    mapping (address => UserInfo) private _ledger;
+    UserInfo[] private _users;
+    mapping (address => mapping (address => uint32)) private _ledger;
 
-    function get_last_activity(address user_addr) public view returns (uint) {
-        return _ledger[user_addr].last_activity;
-    }
-
-    function get_all_users() public view returns (address[] memory) {
+    function get_users() public view returns (UserInfo[] memory) {
         return _users;
     }
 
-    function get_owing_users(address user_addr) public view returns (address[] memory) {
-        return _ledger[user_addr].owing_users;
-    }
+    function touch_user(address user_addr, int user_index) private returns (uint) {
+        uint actual_user_index = uint(user_index);
 
-    function touch_user(address user_addr) private {
-        UserInfo storage user = _ledger[user_addr];
-
-        // insert if non existing before
-        if (user.last_activity == 0) {
-            _users.push(user_addr);
+        // push new user if non existing
+        if (user_index < 0) {
+            for (uint i = 0; i < _users.length; ++i) {
+                require(_users[i].addr != user_addr, "user already exists");
+            }
+            actual_user_index = _users.length;
+            _users.push();
+            _users[actual_user_index].addr = user_addr;
         }
 
-        // put latest timestamp
-        user.last_activity = block.timestamp;
+        require(actual_user_index < _users.length, "user_index out of range");
+        require(user_addr == _users[actual_user_index].addr, "user_addr incorrect");
+
+        _users[actual_user_index].last_activity = block.timestamp;
+
+        return actual_user_index;
     }
 
     function lookup(address debtor, address creditor) public view returns (uint32) {
         require(debtor != address(0), "debtor address is 0");
         require(creditor != address(0), "creditor address is 0");
 
-        return _ledger[debtor].owes[creditor].amount;
+        return _ledger[debtor][creditor];
     }
 
-    function add_IOU(address creditor, uint32 amount, address[] calldata address_chain) public {
+    function add_IOU(address creditor, uint32 amount,
+                     int debtor_index, int creditor_index,
+                     uint[] calldata cycle_chain) public {
         require(creditor != address(0), "creditor address is 0");
         require(amount > 0, "IOU amount must be strictly positive");
         require(msg.sender != creditor, "cannot self owe");
 
-        uint32 new_amount = _ledger[msg.sender].owes[creditor].amount + amount;
+        uint32 new_amount = _ledger[msg.sender][creditor] + amount;
         uint32 min_debt = new_amount;
         uint32 tmp_debt;
 
         // validate the found cycle given by the client
-        for (uint32 i = 1; i < address_chain.length; i++) {
-            tmp_debt = _ledger[address_chain[i-1]].owes[address_chain[i]].amount;
+        for (uint i = 1; i < cycle_chain.length; i++) {
+            tmp_debt = _ledger[_users[cycle_chain[i-1]].addr][_users[cycle_chain[i]].addr];
 
             if (tmp_debt < min_debt) {
                 min_debt = tmp_debt;
@@ -71,27 +69,34 @@ contract BlockchainSplitwise {
         }
 
         // there exists a cycle
-        if (address_chain.length > 0) {
-            require(address_chain[0] == creditor, "first element of address_chain must be the creditor");
-            require(address_chain[address_chain.length - 1] == msg.sender,
+        if (cycle_chain.length > 0) {
+            require(_users[cycle_chain[0]].addr == creditor, "first element of address_chain must be the creditor");
+            require(_users[cycle_chain[cycle_chain.length - 1]].addr == msg.sender,
                 "last element of address_chain must be the sender address");
             new_amount -= min_debt;
         }
 
+        // create new user if necessary
+        uint debtor_index_uint = touch_user(msg.sender, debtor_index);
+        uint creditor_index_uint = touch_user(creditor, creditor_index);
+
         // update sender's ledger
-        UserInfo storage sender = _ledger[msg.sender];
-        OweStats storage owe_stat = sender.owes[creditor];
-        if (!owe_stat.exists) {
-            owe_stat.exists = true;
-            sender.owing_users.push(creditor);
+        UserInfo storage debtor = _users[debtor_index_uint];
+        bool add_creditor = true;
+        for (uint i = 0; i < debtor.creditor_indics.length; ++i) {
+            if (debtor.creditor_indics[i] == creditor_index_uint) {
+                add_creditor = false;
+                break;
+            }
         }
-        owe_stat.amount = new_amount;
-        touch_user(msg.sender);
-        touch_user(creditor);
+        if (add_creditor) {
+            debtor.creditor_indics.push(creditor_index_uint);
+        }
+        _ledger[msg.sender][creditor] = new_amount;
 
         // update cycle ledger
-        for (uint32 i = 1; i < address_chain.length; i++) {
-            _ledger[address_chain[i-1]].owes[address_chain[i]].amount -= min_debt;
+        for (uint i = 1; i < cycle_chain.length; i++) {
+            _ledger[_users[cycle_chain[i-1]].addr][_users[cycle_chain[i]].addr] -= min_debt;
         }
     }
 }

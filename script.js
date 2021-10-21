@@ -23,9 +23,19 @@ var abi = [
         "type": "uint32"
       },
       {
-        "internalType": "address[]",
-        "name": "address_chain",
-        "type": "address[]"
+        "internalType": "int256",
+        "name": "debtor_index",
+        "type": "int256"
+      },
+      {
+        "internalType": "int256",
+        "name": "creditor_index",
+        "type": "int256"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "cycle_chain",
+        "type": "uint256[]"
       }
     ],
     "name": "add_IOU",
@@ -35,50 +45,29 @@ var abi = [
   },
   {
     "inputs": [],
-    "name": "get_all_users",
+    "name": "get_users",
     "outputs": [
       {
-        "internalType": "address[]",
+        "components": [
+          {
+            "internalType": "address",
+            "name": "addr",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "last_activity",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256[]",
+            "name": "creditor_indics",
+            "type": "uint256[]"
+          }
+        ],
+        "internalType": "struct BlockchainSplitwise.UserInfo[]",
         "name": "",
-        "type": "address[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user_addr",
-        "type": "address"
-      }
-    ],
-    "name": "get_last_activity",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user_addr",
-        "type": "address"
-      }
-    ],
-    "name": "get_owing_users",
-    "outputs": [
-      {
-        "internalType": "address[]",
-        "name": "",
-        "type": "address[]"
+        "type": "tuple[]"
       }
     ],
     "stateMutability": "view",
@@ -114,7 +103,7 @@ var abi = [
 abiDecoder.addABI(abi);
 // call abiDecoder.decodeMethod to use this - see 'getAllFunctionCalls' for more
 
-var contractAddress = '0xAf0f04A5E26BcE3Bbb42d92C1312C124B96bF7BF'; // FIXME: fill this in with your contract's address/hash
+var contractAddress = '0x12458b3aC2badAfe46D15552524BF2a6777454D7'; // FIXME: fill this in with your contract's address/hash
 var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 
 // =============================================================================
@@ -136,16 +125,22 @@ async function getOwingUsers(user) {
 // OR
 //   - a list of everyone currently owing or being owed money
 async function getUsers() {
-  const users = await BlockchainSplitwise.methods.get_all_users().call();
-  return users
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  return users.map(ele => ele[0].toLowerCase());
 }
 
 // TODO: Get the total amount owed by the user specified by 'user'
 async function getTotalOwed(user) {
-  const owing_users = await BlockchainSplitwise.methods.get_owing_users(user).call();
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const user_index = users.findIndex(ele => ele[0].toLowerCase() == user.toLowerCase());
+
+  if (user_index == -1) {
+    return 0;
+  }
 
   let total_dept = 0;
-  for (const creditor of owing_users) {
+  for (const creditor_index of users[user_index][2]) {
+    const creditor = users[Number(creditor_index)][0];
     const dept = await BlockchainSplitwise.methods.lookup(user, creditor).call();
     total_dept += Number(dept);
   }
@@ -157,19 +152,52 @@ async function getTotalOwed(user) {
 // Return null if you can't find any activity for the user.
 // HINT: Try looking at the way 'getAllFunctionCalls' is written. You can modify it if you'd like.
 async function getLastActive(user) {
-  const last_activity = await BlockchainSplitwise.methods.get_last_activity(user).call();
-  return Number(last_activity) ? last_activity : null;
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const user_index = users.findIndex(ele => ele[0].toLowerCase() == user.toLowerCase());
+
+  if (user_index == -1) {
+    return null;
+  }
+
+  const last_activity = Number(users[user_index][1]);
+
+  return last_activity ? last_activity : null;
 }
 
 // TODO: add an IOU ('I owe you') to the system
 // The person you owe money is passed as 'creditor'
 // The amount you owe them is passed as 'amount'
 async function add_IOU(creditor, amount) {
-  const owing_users = await getOwingUsers(web3.eth.defaultAccount);
-  const address_chain = await doBFS(creditor, web3.eth.defaultAccount, getOwingUsers);
-  await BlockchainSplitwise.methods.add_IOU(creditor, amount, address_chain).send({
-    from: web3.eth.defaultAccount,
-    gas: 300000,
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const debtor = web3.eth.defaultAccount;
+  const debtor_index = users.findIndex(ele => ele[0].toLowerCase() == debtor.toLowerCase());
+  const creditor_index = users.findIndex(ele => ele[0].toLowerCase() == creditor.toLowerCase());
+
+  const cycle_chain = debtor_index == -1 ? [] :
+    await doBFS(creditor_index, debtor_index, async (user_index) => {
+      if (user_index == -1) {
+        return [];
+      }
+
+      const owing_indics = users[user_index][2].map(ele => Number(ele));
+      const owing_amounts = await Promise.all(owing_indics.map(owing_index =>
+        BlockchainSplitwise.methods
+        .lookup(users[user_index][0], users[owing_index][0])
+        .call()));
+
+      return owing_indics.filter((_, i) => Number(owing_amounts[i]) > 0);
+    });
+
+  const gas = await BlockchainSplitwise.methods.add_IOU(
+    creditor, amount, debtor_index, creditor_index, cycle_chain)
+    .estimateGas({from: debtor});
+
+  console.log("Gas consumption: ", gas);
+
+  await BlockchainSplitwise.methods.add_IOU(
+    creditor, amount, debtor_index, creditor_index, cycle_chain).send({
+    from: debtor,
+    gas: gas,
     value: 0,
   });
 }
