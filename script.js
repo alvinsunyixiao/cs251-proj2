@@ -9,13 +9,101 @@ var GENESIS = '0x000000000000000000000000000000000000000000000000000000000000000
 
 // This is the ABI for your contract (get it from Remix, in the 'Compile' tab)
 // ============================================================
-var abi = []; // FIXME: fill this in with your contract's ABI //Be sure to only have one array, not two
+var abi = [
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "creditor",
+        "type": "address"
+      },
+      {
+        "internalType": "uint32",
+        "name": "amount",
+        "type": "uint32"
+      },
+      {
+        "internalType": "int256",
+        "name": "debtor_index",
+        "type": "int256"
+      },
+      {
+        "internalType": "int256",
+        "name": "creditor_index",
+        "type": "int256"
+      },
+      {
+        "internalType": "uint256[]",
+        "name": "cycle_chain",
+        "type": "uint256[]"
+      }
+    ],
+    "name": "add_IOU",
+    "outputs": [],
+    "stateMutability": "nonpayable",
+    "type": "function"
+  },
+  {
+    "inputs": [],
+    "name": "get_users",
+    "outputs": [
+      {
+        "components": [
+          {
+            "internalType": "address",
+            "name": "addr",
+            "type": "address"
+          },
+          {
+            "internalType": "uint256",
+            "name": "last_activity",
+            "type": "uint256"
+          },
+          {
+            "internalType": "uint256[]",
+            "name": "creditor_indics",
+            "type": "uint256[]"
+          }
+        ],
+        "internalType": "struct BlockchainSplitwise.UserInfo[]",
+        "name": "",
+        "type": "tuple[]"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  },
+  {
+    "inputs": [
+      {
+        "internalType": "address",
+        "name": "debtor",
+        "type": "address"
+      },
+      {
+        "internalType": "address",
+        "name": "creditor",
+        "type": "address"
+      }
+    ],
+    "name": "lookup",
+    "outputs": [
+      {
+        "internalType": "uint32",
+        "name": "",
+        "type": "uint32"
+      }
+    ],
+    "stateMutability": "view",
+    "type": "function"
+  }
+]; // FIXME: fill this in with your contract's ABI //Be sure to only have one array, not two
 
 // ============================================================
 abiDecoder.addABI(abi);
 // call abiDecoder.decodeMethod to use this - see 'getAllFunctionCalls' for more
 
-var contractAddress = ''; // FIXME: fill this in with your contract's address/hash
+var contractAddress = '0x12458b3aC2badAfe46D15552524BF2a6777454D7'; // FIXME: fill this in with your contract's address/hash
 var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 
 // =============================================================================
@@ -23,6 +111,13 @@ var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 // =============================================================================
 
 // TODO: Add any helper functions here!
+async function getOwingUsers(user) {
+  const owing_users = await BlockchainSplitwise.methods.get_owing_users(user).call();
+  const owing_amounts = await Promise.all(owing_users.map(owing_user =>
+    BlockchainSplitwise.methods.lookup(user, owing_user).call()));
+
+  return owing_users.filter((_, i) => Number(owing_amounts[i] > 0));
+}
 
 // TODO: Return a list of all users (creditors or debtors) in the system
 // You can return either:
@@ -30,26 +125,81 @@ var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 // OR
 //   - a list of everyone currently owing or being owed money
 async function getUsers() {
-
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  return users.map(ele => ele[0].toLowerCase());
 }
 
 // TODO: Get the total amount owed by the user specified by 'user'
 async function getTotalOwed(user) {
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const user_index = users.findIndex(ele => ele[0].toLowerCase() == user.toLowerCase());
 
+  if (user_index == -1) {
+    return 0;
+  }
+
+  let total_dept = 0;
+  for (const creditor_index of users[user_index][2]) {
+    const creditor = users[Number(creditor_index)][0];
+    const dept = await BlockchainSplitwise.methods.lookup(user, creditor).call();
+    total_dept += Number(dept);
+  }
+
+  return total_dept;
 }
 
 // TODO: Get the last time this user has sent or received an IOU, in seconds since Jan. 1, 1970
 // Return null if you can't find any activity for the user.
 // HINT: Try looking at the way 'getAllFunctionCalls' is written. You can modify it if you'd like.
 async function getLastActive(user) {
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const user_index = users.findIndex(ele => ele[0].toLowerCase() == user.toLowerCase());
 
+  if (user_index == -1) {
+    return null;
+  }
+
+  const last_activity = Number(users[user_index][1]);
+
+  return last_activity ? last_activity : null;
 }
 
 // TODO: add an IOU ('I owe you') to the system
 // The person you owe money is passed as 'creditor'
 // The amount you owe them is passed as 'amount'
 async function add_IOU(creditor, amount) {
+  const users = await BlockchainSplitwise.methods.get_users().call();
+  const debtor = web3.eth.defaultAccount;
+  const debtor_index = users.findIndex(ele => ele[0].toLowerCase() == debtor.toLowerCase());
+  const creditor_index = users.findIndex(ele => ele[0].toLowerCase() == creditor.toLowerCase());
 
+  const cycle_chain = debtor_index == -1 ? [] :
+    await doBFS(creditor_index, debtor_index, async (user_index) => {
+      if (user_index == -1) {
+        return [];
+      }
+
+      const owing_indics = users[user_index][2].map(ele => Number(ele));
+      const owing_amounts = await Promise.all(owing_indics.map(owing_index =>
+        BlockchainSplitwise.methods
+        .lookup(users[user_index][0], users[owing_index][0])
+        .call()));
+
+      return owing_indics.filter((_, i) => Number(owing_amounts[i]) > 0);
+    });
+
+  const gas = await BlockchainSplitwise.methods.add_IOU(
+    creditor, amount, debtor_index, creditor_index, cycle_chain)
+    .estimateGas({from: debtor});
+
+  console.log("Gas consumption: ", gas);
+
+  await BlockchainSplitwise.methods.add_IOU(
+    creditor, amount, debtor_index, creditor_index, cycle_chain).send({
+    from: debtor,
+    gas: gas,
+    value: 0,
+  });
 }
 
 // =============================================================================
@@ -108,7 +258,7 @@ async function doBFS(start, end, getNeighbors) {
       }
     }
   }
-  return null;
+  return [];
 }
 
 // =============================================================================
