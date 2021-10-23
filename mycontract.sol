@@ -5,44 +5,37 @@
 pragma solidity >=0.8.0 <0.9.0;
 
 contract BlockchainSplitwise {
-    struct OweStats {
+    struct DebtInfo {
         uint32 amount;
         bool exists;
     }
 
     struct UserInfo {
-        mapping (address => OweStats) owes;
+        mapping (address => DebtInfo) owes;
         address[] owing_users;
-        uint last_activity;
+        bool exists;
     }
 
-    address[] private _users;
+    address[] private _debtors;
     mapping (address => UserInfo) private _ledger;
 
-    function get_last_activity(address user_addr) public view returns (uint) {
-        return _ledger[user_addr].last_activity;
+    /**
+     * Return addresses of all debtors
+     **/
+    function get_all_debtors() public view returns (address[] memory) {
+        return _debtors;
     }
 
-    function get_all_users() public view returns (address[] memory) {
-        return _users;
-    }
-
+    /**
+     * Return an array of addresses to which user_addr is owing debt.
+     **/
     function get_owing_users(address user_addr) public view returns (address[] memory) {
         return _ledger[user_addr].owing_users;
     }
 
-    function touch_user(address user_addr) private {
-        UserInfo storage user = _ledger[user_addr];
-
-        // insert if non existing before
-        if (user.last_activity == 0) {
-            _users.push(user_addr);
-        }
-
-        // put latest timestamp
-        user.last_activity = block.timestamp;
-    }
-
+    /**
+     * Lookup how much does debtor owe creditor
+     **/
     function lookup(address debtor, address creditor) public view returns (uint32) {
         require(debtor != address(0), "debtor address is 0");
         require(creditor != address(0), "creditor address is 0");
@@ -50,6 +43,9 @@ contract BlockchainSplitwise {
         return _ledger[debtor].owes[creditor].amount;
     }
 
+    /**
+     * Add an IOU (I owe you) to the ledger
+     **/
     function add_IOU(address creditor, uint32 amount, address[] calldata address_chain) public {
         require(creditor != address(0), "creditor address is 0");
         require(amount > 0, "IOU amount must be strictly positive");
@@ -80,14 +76,15 @@ contract BlockchainSplitwise {
 
         // update sender's ledger
         UserInfo storage sender = _ledger[msg.sender];
-        OweStats storage owe_stat = sender.owes[creditor];
-        if (!owe_stat.exists) {
-            owe_stat.exists = true;
-            sender.owing_users.push(creditor);
+        if (!sender.exists) {
+            _debtors.push(msg.sender);
+            sender.exists = true;
         }
-        owe_stat.amount = new_amount;
-        touch_user(msg.sender);
-        touch_user(creditor);
+        if (!sender.owes[creditor].exists) {
+            sender.owing_users.push(creditor);
+            sender.owes[creditor].exists = true;
+        }
+        sender.owes[creditor].amount = new_amount;
 
         // update cycle ledger
         for (uint32 i = 1; i < address_chain.length; i++) {
@@ -95,3 +92,4 @@ contract BlockchainSplitwise {
         }
     }
 }
+

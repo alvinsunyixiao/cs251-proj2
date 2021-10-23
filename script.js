@@ -35,31 +35,12 @@ var abi = [
   },
   {
     "inputs": [],
-    "name": "get_all_users",
+    "name": "get_all_debtors",
     "outputs": [
       {
         "internalType": "address[]",
         "name": "",
         "type": "address[]"
-      }
-    ],
-    "stateMutability": "view",
-    "type": "function"
-  },
-  {
-    "inputs": [
-      {
-        "internalType": "address",
-        "name": "user_addr",
-        "type": "address"
-      }
-    ],
-    "name": "get_last_activity",
-    "outputs": [
-      {
-        "internalType": "uint256",
-        "name": "",
-        "type": "uint256"
       }
     ],
     "stateMutability": "view",
@@ -114,7 +95,7 @@ var abi = [
 abiDecoder.addABI(abi);
 // call abiDecoder.decodeMethod to use this - see 'getAllFunctionCalls' for more
 
-var contractAddress = '0x8e6Fdc886Ce905280cF35230B338d95d7AA75A5c'; // FIXME: fill this in with your contract's address/hash
+var contractAddress = '0xa170D084e88Fb21f8AE880E3a009961C6Be9bD5F'; // FIXME: fill this in with your contract's address/hash
 var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 
 // =============================================================================
@@ -122,6 +103,8 @@ var BlockchainSplitwise = new web3.eth.Contract(abi, contractAddress);
 // =============================================================================
 
 // TODO: Add any helper functions here!
+
+// Get an array of addresses that user is owing debt to
 async function getOwingUsers(user) {
   const owing_users = await BlockchainSplitwise.methods.get_owing_users(user).call();
   const owing_amounts = await Promise.all(owing_users.map(owing_user =>
@@ -136,8 +119,17 @@ async function getOwingUsers(user) {
 // OR
 //   - a list of everyone currently owing or being owed money
 async function getUsers() {
-  const users = await BlockchainSplitwise.methods.get_all_users().call();
-  return users
+  const debtors = await BlockchainSplitwise.methods.get_all_debtors().call();
+  let all_users = new Set(debtors);
+
+  for (const debtor of debtors) {
+    const owing_users = await BlockchainSplitwise.methods.get_owing_users(debtor).call();
+    for (const owing_user of owing_users) {
+      all_users.add(owing_user);
+    }
+  }
+
+  return [...all_users];
 }
 
 // TODO: Get the total amount owed by the user specified by 'user'
@@ -157,8 +149,17 @@ async function getTotalOwed(user) {
 // Return null if you can't find any activity for the user.
 // HINT: Try looking at the way 'getAllFunctionCalls' is written. You can modify it if you'd like.
 async function getLastActive(user) {
-  const last_activity = await BlockchainSplitwise.methods.get_last_activity(user).call();
-  return Number(last_activity) ? last_activity : null;
+  user = user.toLowerCase();
+  const all_function_calls = await getAllFunctionCalls(contractAddress, "add_IOU");
+
+  let t = 0;
+  for (let f_call of all_function_calls) {
+    if (f_call.from == user || f_call.args[0] == user) {
+      t = Math.max(t, f_call.t);
+    }
+  }
+
+  return t ? t : null;
 }
 
 // TODO: add an IOU ('I owe you') to the system
