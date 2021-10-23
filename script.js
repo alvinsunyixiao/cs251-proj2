@@ -110,6 +110,7 @@ async function getOwingUsers(user) {
   const owing_amounts = await Promise.all(owing_users.map(owing_user =>
     BlockchainSplitwise.methods.lookup(user, owing_user).call()));
 
+  // remove creditors whos debt are paid off
   return owing_users.filter((_, i) => Number(owing_amounts[i] > 0));
 }
 
@@ -152,9 +153,12 @@ async function getLastActive(user) {
   user = user.toLowerCase();
   const all_function_calls = await getAllFunctionCalls(contractAddress, "add_IOU");
 
+  // default timestamp as 0
   let t = 0;
+
   for (let f_call of all_function_calls) {
     if (f_call.from == user || f_call.args[0] == user) {
+      // find the latest timestamp
       t = Math.max(t, f_call.t);
     }
   }
@@ -172,13 +176,13 @@ async function add_IOU(creditor, amount) {
   const gas = await BlockchainSplitwise.methods.add_IOU(creditor, amount, address_chain)
     .estimateGas({from: web3.eth.defaultAccount});
 
-  console.log("Gas consumption: ", gas);
-
   await BlockchainSplitwise.methods.add_IOU(creditor, amount, address_chain).send({
     from: web3.eth.defaultAccount,
     gas: gas,
     value: 0,
   });
+
+  console.log("add_IOU gas consumption: ", gas);
 }
 
 // =============================================================================
